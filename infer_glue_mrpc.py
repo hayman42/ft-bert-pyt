@@ -90,11 +90,11 @@ def main():
         print("accuracy:", cnt / total)
 
 
-model_dir = "/workspace/FasterTransformer/bert-quantization/bert-pyt-quantization/model/bert-base-cased-mrpc/"
+model_dir = "/workspace/ft-bert-pyt/model/bert-base-cased-mrpc/"
 config_file = model_dir + "config.json"
 init_checkpoint = model_dir + "pytorch_model.bin"
 vocab_file = model_dir + "vocab.txt"
-data_dir = "/workspace/FasterTransformer/bert-quantization/bert-pyt-quantization/data/glue/MRPC"
+data_dir = "/workspace/ft-bert-pyt/data/glue/MRPC"
 tokenizer_config_path = model_dir + "tokenizer_config.json"
 tokenizer_path = model_dir
 local_rank = -1
