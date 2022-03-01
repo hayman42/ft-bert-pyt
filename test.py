@@ -12,7 +12,7 @@ from quantized_modeling import BertQuantizedEncoder
 import random
 
 
-def adjust_state_dict(state_dict, quantization_schemes=[0]*12):
+def adjust_state_dict(state_dict, quantization_schemes):
     new_state_dict = OrderedDict()
     for key, val in state_dict.items():
         if "LayerNorm" in key:
@@ -100,7 +100,7 @@ def main():
     model.to(device)
     print(quantization_schemes)
 
-    # model.bert.output_all_encoded_layers = True
+    model.bert.output_all_encoded_layers = True
     if fp16:
         model.half()
 
@@ -113,7 +113,7 @@ def main():
             if n == n_samples:
                 break
             input_ids, token_type_ids, attention_mask, label_ids = process_glue_mrpc_data(data, tokenizer, device)
-            _, logits = model(input_ids.to(device), token_type_ids.to(device), attention_mask.to(device))
+            _, logits = model(input_ids, token_type_ids, attention_mask)
             if predict(logits, label_ids, False):
                 cnt += 1
         print("total time:", time() - a)
@@ -133,7 +133,7 @@ do_lower_case = False
 no_cuda = False
 fp16 = False
 # quantization_schemes = [random.randint(0, 3) for i in range(12)]
-quantization_schemes = [0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0]
+quantization_schemes = [3]*12
 
 if __name__ == "__main__":
     main()

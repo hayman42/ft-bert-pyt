@@ -353,7 +353,7 @@ class BertLayerNorm(Module):
         self.eps = eps
         self.gamma = nn.Parameter(torch.ones(hidden_size))
         self.beta = nn.Parameter(torch.zeros(hidden_size))
-        self.apex_enabled = APEX_IS_AVAILABLE
+        self.apex_enabled = False
 
     @torch.jit.unused
     def fused_layer_norm(self, x):
