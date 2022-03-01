@@ -118,20 +118,52 @@ def eval_diff(orig, quant, data, pos):
     print()
 
 
+def make_table(table, pos, scheme, orig, quant, data):
+    orig_encoders, _ = orig(data[0], data[1], data[2])
+    quant_encoders, _ = quant(data[0], data[1], data[2])
+    orig_enc_output = orig_encoders[pos]
+    quant_enc_output = quant_encoders[pos]
+    diff = orig_enc_output - quant_enc_output
+    corrcoefs = list(
+        torch.corrcoef(
+            torch.stack((x.view(-1), y.view(-1)), 0)) for x, y in zip(orig_enc_output, quant_enc_output))
+    mean_corrcoef = torch.mean(torch.stack(corrcoefs, 0), dim=0)
+    ae = diff.abs()
+    se = diff*diff
+    mae = ae.mean(dim=1)
+    mse = se.mean(dim=1)
+    std = diff.std(dim=1)
+
+    mean_mae = mae.mean().item()
+    mean_mse = mse.mean().item()
+    std_mae = mae.std().item()
+    std_mse = mse.std().item()
+
+    mean_std = std.mean().item()
+    std_std = std.std().item()
+
+    table[(pos, scheme)] = [mean_corrcoef[0][1].item(), mean_mae, mean_mse, std_mae, std_mse, mean_std, std_std]
+    return
+
+
 def main():
+    table = torch.load("table.bin")
+    for i, j in table.items():
+        print(i, [round(x, 4) for x in j])
+    return
     config = BertConfig.from_json_file(config_file)
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, config=config)
-    rawdata = datasets.load_dataset("glue", "mrpc")["validation"]
+    rawdata = datasets.load_dataset("glue", "mrpc")["train"]
     loader = DataLoader(rawdata, batch_size=n_samples, shuffle=True)
 
     if no_cuda:
         device = torch.device("cpu")
     elif local_rank == -1:
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         torch.cuda.set_device(local_rank)
-        device = torch.device("cuda:0", local_rank)
+        device = torch.device("cuda", local_rank)
 
     # set dropout prob to 0
     # config.hidden_dropout_prob = 0
@@ -140,28 +172,48 @@ def main():
     config.output_all_encoded_layers = True
     state_dict = torch.load(init_checkpoint)
 
-    orig = BertForSequenceClassification(config, 2)
-    apply_quantization(orig, config, state_dict)
-    orig.to(device)
+    # orig = BertForSequenceClassification(config, 2)
+    # apply_quantization(orig, config, state_dict)
+    # orig.to(device)
 
-    quant = BertForSequenceClassification(config, 2)
-    apply_quantization(quant, config, state_dict, quantization_schemes)
-    quant.to(device)
-    print(quantization_schemes)
+    # quant = BertForSequenceClassification(config, 2)
+    # apply_quantization(quant, config, state_dict, quantization_schemes)
+    # quant.to(device)
+    # print(quantization_schemes)
 
-    orig.eval()
-    quant.eval()
+    # orig.eval()
+    # quant.eval()
 
-    if fp16:
-        orig.half()
-        quant.half()
+    # if fp16:
+    #     orig.half()
+    #     quant.half()
 
     with torch.no_grad():
         a = time()
         for data in loader:
-            eval_diff(orig, quant, process_glue_mrpc_data(data, tokenizer, device), pos)
+            orig = BertForSequenceClassification(config, 2)
+            apply_quantization(orig, config, state_dict)
+            orig.to(device)
+            orig.eval()
+            processed_data = process_glue_mrpc_data(data, tokenizer, device)
+            table = OrderedDict()
+
+            for i in tqdm(range(12)):
+                schemes = [0] * 12
+                for j in range(4):
+                    schemes[i] = j
+                    quant = BertForSequenceClassification(config, 2)
+                    apply_quantization(quant, config, state_dict, schemes)
+                    quant.to(device)
+                    quant.eval()
+
+                    make_table(table, i, j, orig, quant, processed_data)
+                    del quant
+                schemes[i] = 0
+                # eval_diff(orig, quant, process_glue_mrpc_data(data, tokenizer, device), i)
+            torch.save(table, "table.bin")
             break
-        print("total time:", time() - a)
+        # print("total time:", time() - a)
 
 
 model_dir = "/workspace/ft-bert-pyt/model/bert-base-cased-mrpc/"
@@ -171,15 +223,16 @@ vocab_file = model_dir + "vocab.txt"
 data_dir = "/workspace/ft-bert-pyt/data/glue/MRPC"
 tokenizer_config_path = model_dir + "tokenizer_config.json"
 tokenizer_path = model_dir
-local_rank = -1
-n_samples = 100
+local_rank = 2
+n_samples = 128
 do_lower_case = False
 no_cuda = False
 fp16 = False
 quantization_schemes = [random.randint(0, 3) for i in range(12)]
-# quantization_schemes = [3] * 12
-# quantization_schemes = [0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0]
-pos = 11
+quantization_schemes = [3] * 12
+# quantization_schemes = [0, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0]
+pos = 2
+device_to_use = 2
 
 if __name__ == "__main__":
     main()

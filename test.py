@@ -86,18 +86,19 @@ def main():
     if no_cuda:
         device = torch.device("cpu")
     elif local_rank == -1:
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         torch.cuda.set_device(local_rank)
-        device = torch.device("cuda:0", local_rank)
+        device = torch.device("cuda", local_rank)
 
     # set dropout prob to 0
-    config.hidden_dropout_prob = 0
-    config.attention_probs_dropout_prob = 0
+    # config.hidden_dropout_prob = 0
+    # config.attention_probs_dropout_prob = 0
     config.output_all_encoded_layers = True
     model = BertForSequenceClassification(config, 2)
     apply_quantization(model, config, torch.load(init_checkpoint), quantization_schemes)
     model.to(device)
+    model.eval()
     print(quantization_schemes)
 
     model.bert.output_all_encoded_layers = True
@@ -127,13 +128,13 @@ vocab_file = model_dir + "vocab.txt"
 data_dir = "/workspace/ft-bert-pyt/data/glue/MRPC"
 tokenizer_config_path = model_dir + "tokenizer_config.json"
 tokenizer_path = model_dir
-local_rank = -1
+local_rank = 2
 n_samples = 1000
 do_lower_case = False
 no_cuda = False
 fp16 = False
 # quantization_schemes = [random.randint(0, 3) for i in range(12)]
-quantization_schemes = [3]*12
+quantization_schemes = [2] * 12
 
 if __name__ == "__main__":
     main()
