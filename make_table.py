@@ -10,151 +10,17 @@ from time import time
 from quantize import quantize
 from quantized_modeling import BertQuantizedEncoder
 import random
-
-
-def adjust_state_dict(state_dict, quantization_schemes):
-    new_state_dict = OrderedDict()
-    for key, val in state_dict.items():
-        if "LayerNorm" in key:
-            if "weight" in key:
-                new_state_dict[key.replace("weight", "gamma")] = val
-            if "bias" in key:
-                new_state_dict[key.replace("bias", "beta")] = val
-        elif "encoder" in key and "weight" in key:
-            n = int(''.join(x for x in key if x.isdigit()))
-            if "attention" in key:
-                n_bits = 8 if quantization_schemes[n] < 2 else 4
-            else:
-                n_bits = 4 if quantization_schemes[n] % 2 else 8
-            q, s, z = quantize(val, n_bits)
-            s = s.float().unsqueeze(0)
-            z = z.float().unsqueeze(0)
-            new_state_dict[key] = q
-            new_state_dict[key.replace("weight", "scale")] = s
-            new_state_dict[key.replace("weight", "zero_point")] = z
-        else:
-            new_state_dict[key] = val
-    return new_state_dict
-
-
-def apply_quantization(model, config, state_dict, quantization_schemes=[0]*12):
-    '''
-    0: 8 bit attention & 8 bit fc
-    1: 8 bit attention & 4 bit fc
-    2: 4 bit attention & 8 bit fc
-    3: 4 bit attention & 4 bit fc
-    '''
-    model.bert.encoder = BertQuantizedEncoder(config, quantization_schemes)
-    new_state_dict = adjust_state_dict(state_dict, quantization_schemes)
-    model.load_state_dict(new_state_dict)
-
-
-def predict(logits, label_ids, print_result=True):
-    logit = logits.squeeze()
-    label = label_ids[0].item()
-    prob = F.softmax(logit, dim=0)
-    pred = prob.argmax().item()
-
-    if print_result:
-        print()
-        print("predicted id:", pred)
-        print("prob:", prob[pred])
-        print("logit:", logit[pred])
-        print("label_id:", label)
-        print("preb == label?:", pred == label)
-        print()
-
-    return pred == label
-
-
-def process_glue_mrpc_data(data, tokenizer, device):
-    res = tokenizer(*(data["sentence1"], data["sentence2"]),
-                    padding="max_length", max_length=512, truncation=True)
-    input_ids, token_type_ids, attention_mask = \
-        [torch.tensor(x).to(device) for x in res.values()]
-    label_ids = data["label"].to(device)
-    return input_ids, token_type_ids, attention_mask, label_ids
-
-
-def eval_diff(orig, quant, data, pos):
-    input_ids, token_type_ids, attention_mask, label_ids = data
-    orig_encoders, orig_logits = orig(input_ids, token_type_ids, attention_mask)
-    quant_encoders, quant_logits = quant(input_ids, token_type_ids, attention_mask)
-
-    orig_prob = (label_ids == orig_logits.argmax(dim=1)).sum() / (label_ids.shape[0])
-    quant_prob = (label_ids == quant_logits.argmax(dim=1)).sum() / (label_ids.shape[0])
-
-    orig_enc_output = orig_encoders[pos][:, 0]
-    quant_enc_output = quant_encoders[pos][:, 0]
-    diff = orig_enc_output - quant_enc_output
-    corrcoefs = list(torch.corrcoef(torch.stack((x, y), 0)) for x, y in zip(orig_enc_output, quant_enc_output))
-    mean_corrcoef = torch.mean(torch.stack(corrcoefs, 0), dim=0)
-    # corrcoef = torch.corrcoef(
-    #     torch.stack((orig_enc_output.view(-1), quant_enc_output.view(-1)), 0))
-    ae = diff.abs()
-    se = diff*diff
-    mae = ae.mean(dim=1)
-    mse = se.mean(dim=1)
-    std = diff.std(dim=1)
-
-    mean_mae = mae.mean().item()
-    mean_mse = mse.mean().item()
-    std_mae = mae.std().item()
-    std_mse = mse.std().item()
-
-    mean_std = std.mean().item()
-    std_std = std.std().item()
-
-    print()
-    print("original prob vs quant prob: %.4f vs %.4f" % (orig_prob, quant_prob))
-    print("mean of mae: %.4f" % mean_mae)
-    print("mean of mse: %.4f" % mean_mse)
-    print("std of mae: %.4f" % std_mae)
-    print("std of mse: %.4f" % std_mse)
-    print("mean of std: %.4f" % mean_std)
-    print("std of std: %.4f" % std_std)
-    print("mean of corrcoef:")
-    print(mean_corrcoef)
-    print()
-
-
-def make_table(table, pos, scheme, orig, quant, data):
-    orig_encoders, _ = orig(data[0], data[1], data[2])
-    quant_encoders, _ = quant(data[0], data[1], data[2])
-    orig_enc_output = orig_encoders[pos]
-    quant_enc_output = quant_encoders[pos]
-    diff = orig_enc_output - quant_enc_output
-    corrcoefs = list(
-        torch.corrcoef(
-            torch.stack((x.view(-1), y.view(-1)), 0)) for x, y in zip(orig_enc_output, quant_enc_output))
-    mean_corrcoef = torch.mean(torch.stack(corrcoefs, 0), dim=0)
-    ae = diff.abs()
-    se = diff*diff
-    mae = ae.mean(dim=1)
-    mse = se.mean(dim=1)
-    std = diff.std(dim=1)
-
-    mean_mae = mae.mean().item()
-    mean_mse = mse.mean().item()
-    std_mae = mae.std().item()
-    std_mse = mse.std().item()
-
-    mean_std = std.mean().item()
-    std_std = std.std().item()
-
-    table[(pos, scheme)] = [mean_corrcoef[0][1].item(), mean_mae, mean_mse, std_mae, std_mse, mean_std, std_std]
-    return
+from test_utils import *
 
 
 def main():
-    table = torch.load("table.bin")
-    for i, j in table.items():
-        print(i, [round(x, 4) for x in j])
-    return
+    # for i, j in torch.load(table_dir + task_name + "_table.bin").items():
+    #     print(i, [round(x, 4) for x in j])
+    # return
     config = BertConfig.from_json_file(config_file)
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path, config=config)
-    rawdata = datasets.load_dataset("glue", "mrpc")["train"]
+    rawdata = datasets.load_dataset("glue", task_name)["train"]
     loader = DataLoader(rawdata, batch_size=n_samples, shuffle=True)
 
     if no_cuda:
@@ -172,55 +38,51 @@ def main():
     config.output_all_encoded_layers = True
     state_dict = torch.load(init_checkpoint)
 
-    # orig = BertForSequenceClassification(config, 2)
-    # apply_quantization(orig, config, state_dict)
-    # orig.to(device)
-
-    # quant = BertForSequenceClassification(config, 2)
-    # apply_quantization(quant, config, state_dict, quantization_schemes)
-    # quant.to(device)
-    # print(quantization_schemes)
-
-    # orig.eval()
-    # quant.eval()
-
-    # if fp16:
-    #     orig.half()
-    #     quant.half()
-
     with torch.no_grad():
-        a = time()
         for data in loader:
-            orig = BertForSequenceClassification(config, 2)
+            if task_name == "mrpc" or task_name == "qnli":
+                orig = BertForSequenceClassification(config, 2)
+            elif task_name == "mnli":
+                orig = BertForSequenceClassification(config, 3)
             apply_quantization(orig, config, state_dict)
             orig.to(device)
             orig.eval()
-            processed_data = process_glue_mrpc_data(data, tokenizer, device)
+            processed_data = process_glue_mrpc_data(data, task_name, tokenizer, device)
+            orig_encoders, orig_logits = orig(processed_data[0], processed_data[1], processed_data[2])
             table = OrderedDict()
 
             for i in tqdm(range(12)):
                 schemes = [0] * 12
-                for j in range(4):
+                for j in tqdm(range(0, 4), leave=False):
                     schemes[i] = j
-                    quant = BertForSequenceClassification(config, 2)
+                    if task_name == "mrpc" or task_name == "qnli":
+                        quant = BertForSequenceClassification(config, 2)
+                    elif task_name == "mnli":
+                        quant = BertForSequenceClassification(config, 3)
                     apply_quantization(quant, config, state_dict, schemes)
                     quant.to(device)
                     quant.eval()
-
-                    make_table(table, i, j, orig, quant, processed_data)
+                    for k in [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5]:
+                        if i:
+                            if k:
+                                quant.bert.encoder.layer[i - 1].output_noise = k
+                            else:
+                                quant.bert.encoder.layer[i - 1].output_noise = None
+                        make_table(table, i, j, k, orig_encoders, orig_logits, quant, processed_data)
+                        if i == 0:
+                            break
                     del quant
-                schemes[i] = 0
-                # eval_diff(orig, quant, process_glue_mrpc_data(data, tokenizer, device), i)
-            torch.save(table, "table.bin")
+            torch.save(table, table_dir + task_name + "_table.bin")
+            print("Saved at " + table_dir + task_name + "_table.bin")
             break
-        # print("total time:", time() - a)
 
 
-model_dir = "/workspace/ft-bert-pyt/model/bert-base-cased-mrpc/"
+task_name = "mnli"
+model_dir = f"/workspace/ft-bert-pyt/model/bert-base-cased-{task_name}/"
+table_dir = "/workspace/ft-bert-pyt/table/"
 config_file = model_dir + "config.json"
 init_checkpoint = model_dir + "pytorch_model.bin"
 vocab_file = model_dir + "vocab.txt"
-data_dir = "/workspace/ft-bert-pyt/data/glue/MRPC"
 tokenizer_config_path = model_dir + "tokenizer_config.json"
 tokenizer_path = model_dir
 local_rank = 2
@@ -228,11 +90,6 @@ n_samples = 128
 do_lower_case = False
 no_cuda = False
 fp16 = False
-quantization_schemes = [random.randint(0, 3) for i in range(12)]
-quantization_schemes = [3] * 12
-# quantization_schemes = [0, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0]
-pos = 2
-device_to_use = 2
 
 if __name__ == "__main__":
     main()

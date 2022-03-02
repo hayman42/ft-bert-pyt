@@ -141,16 +141,19 @@ class BertQuantizedLayer(nn.Module):
     3: quantize none of them
     '''
 
-    def __init__(self, config, quantization_scheme=1):
+    def __init__(self, config, quantization_scheme=1, output_noise=None):
         super(BertQuantizedLayer, self).__init__()
         self.attention = BertQuantizedAttention(config, 8-(quantization_scheme // 2)*4)
         self.intermediate = BertQuantizedIntermediate(config, 8-(quantization_scheme % 2)*4)
         self.output = BertQuantizedOutput(config, 8-(quantization_scheme % 2)*4)
+        self.output_noise = output_noise
 
     def forward(self, hidden_states, attention_mask):
         attention_output = self.attention(hidden_states, attention_mask)
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
+        if self.output_noise is not None:
+            layer_output += torch.randn_like(layer_output) * self.output_noise
         return layer_output
 
 
